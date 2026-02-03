@@ -1,5 +1,6 @@
 import discord
 from discord.ext import commands
+from discord import app_commands
 import asyncio
 import os
 from dotenv import load_dotenv
@@ -12,100 +13,101 @@ token = os.getenv('TOKEN')
 intents = discord.Intents.default()
 intents.message_content = True 
 
-# Создаем бота
+# Создаем бота(Оставил пока что префикс пусть будет)
 bot = commands.Bot(command_prefix='!', intents=intents)
 
 # Событие: Бот готов к работе
 @bot.event
 async def on_ready():
-    print(f'------------------------------------')
     print(f'Бот запущен! Имя: {bot.user.name}')
     print(f'ID: {bot.user.id}')
-    print(f'------------------------------------')
 
-# Команда: !ping
-@bot.command()
-async def ping(ctx):
-    await ctx.send('Pong! 🏓 Я работаю с твоего сервера!')
-
-@bot.command(name='h')
-async def commands_list(ctx):
-    embed = discord.Embed(title="Справка по командам", description="Список доступных команд:", color=discord.Color.blue())
-    embed.add_field(name="!ping", value="Проверка работы бота", inline=False)
-    embed.add_field(name="!check [текст]", value="Вывести информацию о сообщении в консоль", inline=False)
-    embed.add_field(name="!status [dnd/online/idle/offline]", value="Изменить статус бота", inline=False)
-    embed.add_field(name="!команды", value="Показать эту справку", inline=False)
-    await ctx.send(embed=embed)
+    # Синхронизация всех комманд с серверами Discord
+    try:
+        synced = await bot.tree.sync()
+        print(f'Синхронизировано команды: {synced}')
+    except Exception as e:
+        print(f'Ошибка синхронизации: {e}')
 
 
-@bot.command()
-async def check(ctx, arg):
-    print(ctx.message)  # Выведет информацию о сообщении внутри ctx
-    await ctx.send(f"Посмотри в консоль! Сообщение: {arg}")
 
-# Переменная для хранения текста статуса (объявлена вне функции)
+# Команда: /ping
+@bot.tree.command(name="ping",description="Проверка связи с ботом")
+async def ping(interaction: discord.Interaction):
+    await interaction.response.send_message(f"Pong!(Ping: {round(bot.latency*1000)}ms)")
+    print(f"Пользователь:{interaction.user} использовал комманду ping")
+
+
+# Команда: /status
+# Переменные для хранения статуса и его текста (объявлена вне функции)
 current_status_text = None
+current_status = "online"
 
-
-
-current_status_text = None
-
-@bot.command()
-async def status(ctx, arg, *, status: str = None):
-    """
-    Меняет статус бота.
-    
-    Аргументы:
-    arg    -- Режим (set, online, dnd, idle, offline)
-    status -- Текст статуса (только для режима set)
-    
-    Примеры:
-    !status set Minecraft
-    !status dnd
-    !status online
-    """
+# Индексация команды и ее аргументов
+@bot.tree.command(name="status", description="Управление статусом бота")
+@app_commands.describe(arg="Выбери статус", status="Текст статуса")
+@app_commands.choices(arg=[
+    app_commands.Choice(name="В сети", value="online"),
+    app_commands.Choice(name="Не беспокоить", value="dnd"),
+    app_commands.Choice(name="Не активен", value="idle"),
+    app_commands.Choice(name="Невидимка", value="offline"),
+    app_commands.Choice(name="Установить текст", value="set")
+])
+# Запуск асинхронной функции
+async def status(interaction: discord.Interaction, arg: app_commands.Choice[str], status: str = None):
+    # Обявление функций как глобальных
     global current_status_text
+    global current_status
 
-    # Если текст был сохранен ранее, используем его
-    activity_text = discord.Game(name=current_status_text) if current_status_text else None
+    # Перевод аргументов из пакета Interaction в переменную для дальнейшей работы
+    selected_arg = arg.value
 
-    # Приводим аргумент к нижнему регистру для удобства
-    arg = arg.lower()
+    # Проверка наличия статуса
+    if status:
+        current_status_text = status
+        activity_text = discord.Game(name=status)
+    else:
+        activity_text = discord.Game(name=current_status_text) if current_status_text else None
 
-    if arg == "set":
+    # Обработка аргумента set
+    if selected_arg == "set":
         if status:
-            current_status_text = status 
-            await bot.change_presence(activity=discord.Game(name=status))
-            await ctx.send(f"Текст статуса сохранен: {status}")
+            current_status_text = status # Запоминаем текст
+            await bot.change_presence(status=current_status, activity=discord.Game(name=status))
+            await interaction.response.send_message(f"Текст статуса сохранен: {status}")
             print(f"Текст статуса сохранен: {status}")
         else:
-            await ctx.send("Укажите текст для статуса")
+            # ephemeral=True означает, что ошибку увидит только ползователь вызвавший команду
+            await interaction.response.send_message("Ошибка: Укажите текст в поле 'status'!", ephemeral=True)
             print("Ошибка: попытка изменить текст без аргумента")
 
-    elif arg == "dnd":
+    # Обработка аргумента dnd
+    elif selected_arg == "dnd":
+        current_status = discord.Status.dnd
         await bot.change_presence(status=discord.Status.do_not_disturb, activity=activity_text)
-        await ctx.send("Статус изменен на: do_not_disturb (DND)")
+        await interaction.response.send_message("Статус изменен на: do_not_disturb (DND)")
         print("Статус изменен на: do_not_disturb (DND)")
 
-    elif arg == "online":
+    # Обработка аргумента online
+    elif selected_arg == "online":
+        current_status = discord.Status.online
         await bot.change_presence(status=discord.Status.online, activity=activity_text)
-        await ctx.send("Статус изменен на: online")
+        await interaction.response.send_message("Статус изменен на: online")
         print("Статус изменен на: online")
 
-    elif arg == "idle":
+    # Обработка аргумента idle
+    elif selected_arg == "idle":
+        current_status = discord.Status.idle
         await bot.change_presence(status=discord.Status.idle, activity=activity_text)
-        await ctx.send("Статус изменен на: idle")
+        await interaction.response.send_message("Статус изменен на: idle")
         print("Статус изменен на: idle")
 
-    elif arg == "offline":
+    # Обработка аргумента offline
+    elif selected_arg == "offline":
         await bot.change_presence(status=discord.Status.invisible)
-        await ctx.send("Статус изменен на: invisible (offline)")
+        await interaction.response.send_message("Статус изменен на: invisible (offline)")
         print("Статус изменен на: invisible (offline)")
-
-    else:
-        await ctx.send("Неверный статус! Используйте: dnd, online, idle, offline или set")
-        print(f"Ошибка: введен неверный аргумент '{arg}'")
-
+   
 #Запуск бота
 try:
     bot.run(token)
