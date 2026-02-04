@@ -32,6 +32,41 @@ async def on_ready():
 
 
 
+# Команда: /help
+@bot.tree.command(name="help", description="Показать все команды")
+async def help(interaction: discord.Interaction):
+
+    # Создаем embed
+    embed = discord.Embed(
+        title="Все команды",
+        description="Вот список того, что я умею\n",
+        color=discord.Color.from_rgb(36, 36, 41)
+    )
+
+    # Получаем все команды как обекты
+    commands_list = bot.tree.get_commands()
+
+    # Перебор каждой команды
+    for command in commands_list:
+        if command.name == "help":
+            continue
+        
+        # Довавляем / названию
+        command_name = f"/{command.name}"
+
+        # Добавляем форматирование тексту
+        command_description = f"```{command.description}```" or "```Описание отсутствует```"
+
+        # Добавляем поле с текстом
+        embed.add_field(name=command_name, value=f"{command_description}", inline=False)
+
+    embed.set_footer(text=f"Всего команд: {len(commands_list)-1}")
+    
+    # Отправка сформированого embed'а
+    await interaction.response.send_message(embed=embed)
+
+
+
 # Команда: /ping
 @bot.tree.command(name="ping",description="Проверка связи с ботом")
 async def ping(interaction: discord.Interaction):
