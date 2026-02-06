@@ -9,7 +9,7 @@ import time as time_module
 
 # Загружаем переменные из файла .env
 load_dotenv()
-token = os.getenv('TOKEN')\
+token = os.getenv('TOKEN')
 
 # Горячие гильдии для быстрой загрузки команд
 GUILD_IDS = os.getenv('GUILD_IDS')
