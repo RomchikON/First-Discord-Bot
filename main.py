@@ -5,10 +5,14 @@ import asyncio
 import random
 import os
 from dotenv import load_dotenv
+import time as time_module
 
 # Загружаем переменные из файла .env
 load_dotenv()
-token = os.getenv('TOKEN')
+token = os.getenv('TOKEN')\
+
+# Горячие гильдии для быстрой загрузки команд
+GUILD_IDS = os.getenv('GUILD_IDS')
 
 # Настройки прав (Интенты)
 intents = discord.Intents.default()
@@ -23,10 +27,22 @@ async def on_ready():
     print(f'Бот запущен! Имя: {bot.user.name}')
     print(f'ID: {bot.user.id}')
 
-    # Синхронизация всех комманд с серверами Discord
+    # Синхронизация команд с горячими гильдиями (быстрая регистрация)
     try:
-        synced = await bot.tree.sync()
-        print(f'Синхронизировано команды: {synced}')
+        if GUILD_IDS:
+            total_synced = 0
+            for guild_id in GUILD_IDS:
+                guild = discord.Object(id=guild_id)
+                # Копируем глобальные команды в гильдию и синхронизируем
+                bot.tree.copy_global_to(guild=guild)
+                synced = await bot.tree.sync(guild=guild)
+                total_synced += len(synced)
+                print(f'Синхронизировано команд для гильдии {guild_id}: {len(synced)}')
+            print(f'Всего синхронизировано команд (горячие гильдии): {total_synced}')
+        else:
+            # Если горячие гильдии не заданы — синхронизируем глобально
+            synced = await bot.tree.sync()
+            print(f'Синхронизировано команд глобально: {len(synced)}')
     except Exception as e:
         print(f'Ошибка синхронизации: {e}')
 
@@ -246,6 +262,166 @@ async def randomteams(
 
     # Отправляем собранный embed
     await interaction.response.send_message(embed=embed)
+
+# Команда: /rgif
+@bot.tree.command(name="rgif", description="Рандомная гифка/изображение с чата Культа Чая за определённый период")
+@app_commands.describe(
+    period="Период из которого брать гифки",
+    include_images="Включить изображения (.png, .jpg, .jpeg)",
+    include_links="Включить ссылки на гифки/изображения из сообщений",
+    ephemeral="Сделать ответ видимым только вам"
+)
+@app_commands.choices(period=[
+    app_commands.Choice(name="День", value="день"),
+    app_commands.Choice(name="Неделя", value="неделя"),
+    app_commands.Choice(name="Месяц", value="месяц"),
+    app_commands.Choice(name="Всё время", value="всё")
+])
+async def rgif(
+    interaction: discord.Interaction, 
+    period: app_commands.Choice[str], 
+    include_images: bool = False,
+    include_links: bool = False,
+    ephemeral: bool = False
+):
+    # Получаем ID канала и само значение канала
+    channel_id = os.getenv('CHAT_ID')
+    channel = bot.get_channel(int(channel_id)) if channel_id else None
+
+    # Проверка существования канала
+    if not channel:
+        await interaction.response.send_message("❌: Не удалось найти канал!", ephemeral=True)
+        return
+    
+    # Проверка что канал является текстовым
+    if not isinstance(channel, discord.TextChannel):
+        await interaction.response.send_message("❌: Канал должен быть текстовым!", ephemeral=True)
+        return
+    
+    # Словарь с периодами в секундах
+    periods = {
+        "день": 86400,
+        "неделя": 604800,
+        "месяц": 2592000,
+        "всё": None
+    }
+
+    # Получаем лимит времени для выбранного периода
+    time_limit = periods[period.value]
+    # Получаем текущее время в UTC
+    current_time = discord.utils.utcnow()
+    # Список для хранения найденных гифок и их сообщений
+    gifs = []
+    gif_messages = []
+    # Счетчик обработанных сообщений
+    message_count = 0
+    # Время начала поиска
+    start_time = time_module.time()
+
+    # Создаем начальный embed для статуса поиска
+    status_embed = discord.Embed(
+        title="🔍 Поиск медиа...",
+        description="Идет сканирование истории сообщений",
+        color=discord.Color.yellow()
+    )
+    # Откладываем ответ на взаимодействие (defer) для долгой обработки
+    await interaction.response.defer()
+    status_message: discord.Message | None = None
+    try:
+        status_message = await interaction.followup.send(embed=status_embed)
+    except:
+        status_message = None
+
+    # Получаем всю историю канала с лимитом None (все сообщения)
+    async for message in channel.history(limit=None):
+        # Проверяем не превышен ли временной лимит
+        if time_limit:
+            if (current_time - message.created_at).total_seconds() > time_limit:
+                break
+        
+        # Увеличиваем счетчик обработанных сообщений
+        message_count += 1
+        
+        # Обновляем статус каждые 50 сообщений
+        if message_count % 50 == 0:
+            # Получаем прошедшее время
+            elapsed = time_module.time() - start_time
+            
+            # Создаем обновленный embed со статусом
+            status_embed = discord.Embed(
+                title="🔍 Поиск медиа...",
+                description=f"Обработано: **{message_count}** сообщений\nНайдено: **{len(gifs)}** медиа\nВремя: **{elapsed:.1f}с**",
+                color=discord.Color.yellow()
+            )
+            try:
+                # Редактируем сообщение статуса если оно существует
+                if status_message:
+                    await status_message.edit(embed=status_embed)
+            except:
+                pass
+        
+        # Перебираем все вложения в сообщении
+        for attachment in message.attachments:
+            # Получаем имя файла в нижнем регистре
+            filename = attachment.filename.lower()
+            # Проверяем расширение файла (gif или изображение если включено)
+            if filename.endswith('.gif') or (include_images and filename.endswith(('.png', '.jpg', '.jpeg'))):
+                gifs.append(attachment.url)
+                gif_messages.append(message)
+        
+        # Проверяем ссылки в контенте сообщения если включено
+        if include_links and message.content:
+            # Разбиваем контент на слова
+            words = message.content.split()
+            for word in words:
+                # Проверяем начинается ли слово с http (URL)
+                if word.startswith('http'):
+                    # Проверяем расширение файла в конце URL
+                    if word.lower().endswith(('.gif', '.png', '.jpg', '.jpeg')):
+                        gifs.append(word)
+                        gif_messages.append(message)
+        
+        # Небольшая задержка для избежания rate limit от Discord
+        await asyncio.sleep(0.01)
+
+    # Получаем итоговое время поиска
+    elapsed = time_module.time() - start_time
+
+    # Если медиа не найдено
+    if not gifs:
+        try:
+            # Удаляем сообщение статуса
+            if status_message:
+                await status_message.delete()
+        except:
+            pass
+        # Отправляем сообщение об ошибке с учетом эфимерности
+        await interaction.followup.send(f"⚠️За период '{period.name}' медиа не найдено.", ephemeral=ephemeral)
+        return
+    
+    # Выбираем случайную гифку из найденных
+    random_index = random.randint(0, len(gifs) - 1)
+    selected_gif = gifs[random_index]
+    selected_message = gif_messages[random_index]
+
+    # Создаем финальный embed с результатами поиска
+    result_embed = discord.Embed(
+        title="✅ Поиск завершен",
+        description=f"Всего медиа найдено: **{len(gifs)}**\nОбработано сообщений: **{message_count}**\nВремя поиска: **{elapsed:.2f}с**\nАвтор: {selected_message.author.mention}\n[Ссылка на сообщение]({selected_message.jump_url})",
+        color=discord.Color.green(),
+    )
+    # Устанавливаем изображение в embed
+    result_embed.set_image(url=selected_gif)
+    
+    try:
+        # Удаляем сообщение статуса если оно существует
+        if status_message:
+            await status_message.delete()
+    except:
+        pass
+    
+    # Отправляем финальный результат с учетом параметра эфимерности
+    await interaction.followup.send(embed=result_embed, ephemeral=ephemeral)
 
 
 
