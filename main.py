@@ -6,15 +6,88 @@ import random
 import os
 from dotenv import load_dotenv
 import time as time_module
+from datetime import datetime, timezone
+
+# Общий UI-стиль для Embed'ов
+class Ui:
+    INFO_COLOR = discord.Color(0x5865F2)  # #5865F2
+    SUCCESS_COLOR = discord.Color(0x57F287)  # #57F287
+    WARN_COLOR = discord.Color(0xFEE75C)  # #FEE75C
+    ERROR_COLOR = discord.Color(0xED4245)  # #ED4245
+
+    @staticmethod
+    # Базовый метод для создания Embed'ов
+    def _base(
+        title: str,
+        description: str | None,
+        color: discord.Color,
+        prefix: str,
+    ) -> discord.Embed:
+        embed = discord.Embed(
+            title=f"{prefix} {title}",
+            description=description,
+            color=color,
+            timestamp=datetime.now(timezone.utc),
+        )
+
+        # Устанавливаем футер
+        embed.set_footer(text="CultOfTea.bot")
+        # Возвращаем созданный Embed
+        return embed
+    
+    @staticmethod
+    # Метод для информационных сообщений
+    def info(title: str, description: str | None = None) -> discord.Embed:
+        return Ui._base(title, description, Ui.INFO_COLOR, "ℹ️")
+    
+    # Метод для успешных сообщений
+    @staticmethod
+    def success(title: str, description: str | None = None) -> discord.Embed:
+        return Ui._base(title, description, Ui.SUCCESS_COLOR, "✅")
+    
+    # Метод для предупреждающих сообщений
+    @staticmethod
+    def warn(title: str, description: str | None = None) -> discord.Embed:
+        return Ui._base(title, description, Ui.WARN_COLOR, "⚠️")
+    
+    # Метод для сообщений об ошибках
+    @staticmethod
+    def error(title: str, description: str | None = None) -> discord.Embed:
+        return Ui._base(title, description, Ui.ERROR_COLOR, "❌")
+
+
 
 # Загружаем переменные из файла .env
 load_dotenv()
 token = os.getenv('TOKEN')
+channel_id = os.getenv('CHAT_ID')
 
 # Горячие гильдии для быстрой загрузки команд
-GUILD_IDS = os.getenv('GUILD_IDS')
+def parse_guild_ids(raw_guild_ids: str | None) -> list[int]:
+    # Если переменная окружения не задана, возвращаем пустой список
+    if not raw_guild_ids:
+        return []
+    
+    # Парсим строку с ID гильдий, поддерживаем разделение через запятую или точку с запятой
+    parsed_ids: list[int] = []
+    for value in raw_guild_ids.replace(";", ",").split(","):
+        # Чистим значение от пробелов
+        value = value.strip()
+        if not value:
+            continue
 
-# Настройки прав (Интенты)
+        # Пытаемся преобразовать значение в целое число и добавить в список, если это возможно
+        try:
+            parsed_ids.append(int(value))
+        except ValueError:
+            print(f"Пропущен некорректный GUILD_ID: {value}")
+
+    return parsed_ids
+
+# Получаем горячие гильдии из переменных окружения
+GUILD_IDS = parse_guild_ids(os.getenv('GUILD_IDS'))
+
+# Настройки прав (нтенты)
 intents = discord.Intents.default()
 intents.message_content = True 
 
@@ -35,14 +108,30 @@ async def on_ready():
                 guild = discord.Object(id=guild_id)
                 # Копируем глобальные команды в гильдию и синхронизируем
                 bot.tree.copy_global_to(guild=guild)
-                synced = await bot.tree.sync(guild=guild)
-                total_synced += len(synced)
-                print(f'Синхронизировано команд для гильдии {guild_id}: {len(synced)}')
-            print(f'Всего синхронизировано команд (горячие гильдии): {total_synced}')
+                try:
+                    synced = await bot.tree.sync(guild=guild)
+                    total_synced += len(synced)
+                    print(f'Синхронизировано команд для гильдии {guild_id}: {len(synced)}')
+                # Обработка ошибки отсутствия доступа к гильдии
+                except discord.Forbidden:
+                    print(f'Нет доступа к гильдии {guild_id} для sync (Missing Access).')
+                # Обработка других ошибок HTTP
+                except discord.HTTPException as sync_error:
+                    print(f'Ошибка sync для гильдии {guild_id}: {sync_error}')
+
+            # Вывод общего количества синхронизированных команд
+            if total_synced > 0:
+                print(f'Всего синхронизировано команд (горячие гильдии): {total_synced}')
+            #
+            else:
+                print('Не удалось синхронизировать горячие гильдии, пробуем глобальную sync...')
+                synced = await bot.tree.sync()
+                print(f'Синхронизировано команд глобально: {len(synced)}')
         else:
             # Если горячие гильдии не заданы — синхронизируем глобально
             synced = await bot.tree.sync()
             print(f'Синхронизировано команд глобально: {len(synced)}')
+    # Обработка общей ошибки синхронизации
     except Exception as e:
         print(f'Ошибка синхронизации: {e}')
 
@@ -53,10 +142,9 @@ async def on_ready():
 async def help(interaction: discord.Interaction):
 
     # Создаем embed
-    embed = discord.Embed(
-        title="Все команды",
-        description="Вот список того, что я умею\n",
-        color=discord.Color.from_rgb(36, 36, 41)
+    embed = Ui.info(
+        "Все команды",
+        "Вот список того, что я умею\n",
     )
 
     # Получаем все команды как обекты
@@ -76,17 +164,58 @@ async def help(interaction: discord.Interaction):
         # Добавляем поле с текстом
         embed.add_field(name=command_name, value=f"{command_description}", inline=False)
 
-    embed.set_footer(text=f"Всего команд: {len(commands_list)-1}")
+    embed.add_field(name="Всего команд", value=str(len(commands_list)-1), inline=False)
     
     # Отправка сформированого embed'а
     await interaction.response.send_message(embed=embed)
 
 
 
+# Command: /cult
+@bot.tree.command(name="cult", description="Основные ресурсы и информация о Культе Чая")
+@app_commands.describe(
+    hide="Сделать ответ видимым только вам"
+)
+async def cult(interaction: discord.Interaction, hide: bool = False):
+    resources = [
+        {"label": "🌐Сайт", "url": "https://www.cultoftea.pp.ua/"},
+        {"label": "📣Телеграмм", "url": "https://t.me/+szwXPoF0_PcwOWYy"},
+        {"label": "⬇️Предложить функционал", "url": "https://github.com/RomchikON/First-Discord-Bot/issues"},
+        {"label": "💰Поддержать проект", "url": "https://patreon.com/CultOfTea"},
+    ]
+
+    # Создаем View для кнопок
+    view = discord.ui.View(timeout=None)
+    for resource in resources:
+        view.add_item(
+            discord.ui.Button(
+                # Тип кнопки - ссылка
+                style=discord.ButtonStyle.link,
+                label=resource["label"],
+                url=resource["url"],
+            )
+        )
+
+    # Создаем Embed через общий UI-стиль
+    embed = Ui.info(
+        "Cult of Tea • Навигация",
+        "Официальные ресурсы проекта в одном месте.",
+    )
+
+    # Отправляем сообщение с embed и кнопками
+    await interaction.response.send_message(embed=embed, view=view, ephemeral=hide)
+    print(f"Пользователь:{interaction.user} использовал комманду cult")
+
+
+
 # Команда: /ping
 @bot.tree.command(name="ping",description="Проверка связи с ботом")
 async def ping(interaction: discord.Interaction):
-    await interaction.response.send_message(f"Pong!(Ping: {round(bot.latency*1000)}ms)")
+    embed = Ui.info(
+        "Сосибля",
+        f"Пинг: **{round(bot.latency*1000)}ms**",
+    )
+    await interaction.response.send_message(embed=embed, ephemeral=True)
     print(f"Пользователь:{interaction.user} использовал комманду ping")
 
 
@@ -95,7 +224,7 @@ async def ping(interaction: discord.Interaction):
 # Переменные для хранения статуса и его текста (объявлена вне функции)
 current_status_text = None
 current_status = "online"
-# Индексация команды и ее аргументов
+# ндексация команды и ее аргументов
 @bot.tree.command(name="status", description="Управление статусом бота")
 @app_commands.describe(arg="Выбери статус", status="Текст статуса")
 @app_commands.choices(arg=[
@@ -238,10 +367,9 @@ async def randomteams(
         count+=1
     
     # Начинаем собирать embed
-    embed = discord.Embed(
-        title="🎲 Случайные команды", 
-        description=f"Всего участников: **{len(people)}** | Команд: **{teams_count}**",
-        color=discord.Color.blue()
+    embed = Ui.info(
+        "Случайные команды",
+        f"Всего участников: **{len(people)}** | Команд: **{teams_count}**",
     )
 
     # Добавляем форматирование никнеймам
@@ -263,13 +391,15 @@ async def randomteams(
     # Отправляем собранный embed
     await interaction.response.send_message(embed=embed)
 
+
+
 # Команда: /rgif
 @bot.tree.command(name="rgif", description="Рандомная гифка/изображение с чата Культа Чая за определённый период")
 @app_commands.describe(
     period="Период из которого брать гифки",
-    include_images="Включить изображения (.png, .jpg, .jpeg)",
-    include_links="Включить ссылки на гифки/изображения из сообщений",
-    ephemeral="Сделать ответ видимым только вам"
+    channel="Канал для поиска (если не указан, то базовый)",
+    images="Включить изображения",
+    hide="Сделать ответ видимым только вам"
 )
 @app_commands.choices(period=[
     app_commands.Choice(name="День", value="день"),
@@ -279,22 +409,23 @@ async def randomteams(
 ])
 async def rgif(
     interaction: discord.Interaction, 
-    period: app_commands.Choice[str], 
-    include_images: bool = False,
-    include_links: bool = False,
-    ephemeral: bool = False
+    period: str, 
+    channel: discord.TextChannel | None = None,
+    images: bool = False,
+    hide: bool = False
 ):
-    # Получаем ID канала и само значение канала
-    channel_id = os.getenv('CHAT_ID')
-    channel = bot.get_channel(int(channel_id)) if channel_id else None
+    # Берем канал из параметра команды или из CHAT_ID
+    target_channel = channel
+    if target_channel is None and channel_id:
+        target_channel = bot.get_channel(int(channel_id))
 
     # Проверка существования канала
-    if not channel:
+    if not target_channel:
         await interaction.response.send_message("❌: Не удалось найти канал!", ephemeral=True)
         return
     
     # Проверка что канал является текстовым
-    if not isinstance(channel, discord.TextChannel):
+    if not isinstance(target_channel, discord.TextChannel):
         await interaction.response.send_message("❌: Канал должен быть текстовым!", ephemeral=True)
         return
     
@@ -307,7 +438,8 @@ async def rgif(
     }
 
     # Получаем лимит времени для выбранного периода
-    time_limit = periods[period.value]
+    time_limit = periods[period]
+    period_label = period
     # Получаем текущее время в UTC
     current_time = discord.utils.utcnow()
     # Список для хранения найденных гифок и их сообщений
@@ -319,10 +451,9 @@ async def rgif(
     start_time = time_module.time()
 
     # Создаем начальный embed для статуса поиска
-    status_embed = discord.Embed(
-        title="🔍 Поиск медиа...",
-        description="Идет сканирование истории сообщений",
-        color=discord.Color.yellow()
+    status_embed = Ui.warn(
+        "Поиск медиа...",
+        "дет сканирование истории сообщений",
     )
     # Откладываем ответ на взаимодействие (defer) для долгой обработки
     await interaction.response.defer()
@@ -333,7 +464,7 @@ async def rgif(
         status_message = None
 
     # Получаем всю историю канала с лимитом None (все сообщения)
-    async for message in channel.history(limit=None):
+    async for message in target_channel.history(limit=None):
         # Проверяем не превышен ли временной лимит
         if time_limit:
             if (current_time - message.created_at).total_seconds() > time_limit:
@@ -348,10 +479,9 @@ async def rgif(
             elapsed = time_module.time() - start_time
             
             # Создаем обновленный embed со статусом
-            status_embed = discord.Embed(
-                title="🔍 Поиск медиа...",
-                description=f"Обработано: **{message_count}** сообщений\nНайдено: **{len(gifs)}** медиа\nВремя: **{elapsed:.1f}с**",
-                color=discord.Color.yellow()
+            status_embed = Ui.warn(
+                "Поиск медиа...",
+                f"Обработано: **{message_count}** сообщений\nНайдено: **{len(gifs)}** медиа\nВремя: **{elapsed:.1f}с**",
             )
             try:
                 # Редактируем сообщение статуса если оно существует
@@ -365,12 +495,12 @@ async def rgif(
             # Получаем имя файла в нижнем регистре
             filename = attachment.filename.lower()
             # Проверяем расширение файла (gif или изображение если включено)
-            if filename.endswith('.gif') or (include_images and filename.endswith(('.png', '.jpg', '.jpeg'))):
+            if filename.endswith('.gif') or (images and filename.endswith(('.png', '.jpg', '.jpeg'))):
                 gifs.append(attachment.url)
                 gif_messages.append(message)
         
-        # Проверяем ссылки в контенте сообщения если включено
-        if include_links and message.content:
+        # Проверяем ссылки в контенте сообщения
+        if message.content:
             # Разбиваем контент на слова
             words = message.content.split()
             for word in words:
@@ -396,7 +526,7 @@ async def rgif(
         except:
             pass
         # Отправляем сообщение об ошибке с учетом эфимерности
-        await interaction.followup.send(f"⚠️За период '{period.name}' медиа не найдено.", ephemeral=ephemeral)
+        await interaction.followup.send(f"⚠️За период '{period_label}' медиа не найдено.", ephemeral=hide)
         return
     
     # Выбираем случайную гифку из найденных
@@ -405,14 +535,14 @@ async def rgif(
     selected_message = gif_messages[random_index]
 
     # Создаем финальный embed с результатами поиска
-    result_embed = discord.Embed(
-        title="✅ Поиск завершен",
-        description=f"Всего медиа найдено: **{len(gifs)}**\nОбработано сообщений: **{message_count}**\nВремя поиска: **{elapsed:.2f}с**\nАвтор: {selected_message.author.mention}\n[Ссылка на сообщение]({selected_message.jump_url})",
-        color=discord.Color.green(),
+    result_embed = Ui.success(
+        "Поиск завершен",
+        f"Всего медиа найдено: **{len(gifs)}**\nОбработано сообщений: **{message_count}**\nВремя поиска: **{elapsed:.2f}с**\nАвтор: {selected_message.author.mention}\n[Ссылка на сообщение]({selected_message.jump_url})",
     )
     # Устанавливаем изображение в embed
     result_embed.set_image(url=selected_gif)
     
+    # Пытаемся удалить сообщение статуса
     try:
         # Удаляем сообщение статуса если оно существует
         if status_message:
@@ -421,7 +551,8 @@ async def rgif(
         pass
     
     # Отправляем финальный результат с учетом параметра эфимерности
-    await interaction.followup.send(embed=result_embed, ephemeral=ephemeral)
+    await interaction.followup.send(embed=result_embed, ephemeral=hide)
+    print(f"Пользователь:{interaction.user} использовал комманду rgif с параметром период: {period_label}, канал: {target_channel.id}, включить изображения: {images}, ссылки: включены, эфимерность: {hide}")
 
 
 
