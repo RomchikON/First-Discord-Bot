@@ -194,7 +194,7 @@ async def randomteams(
     elif items_text:
         # Меняем запятые на пробелы для корректной последующей обработки
         clean_text = items_text.replace(',',' ')
-        # Создаем список слов роздяляя их по пробелам
+        # Создаем список слов розделяя их по пробелам
         raw_words = clean_text.split(' ')
         # Чистим список от пробелов
         for word in raw_words:
